@@ -1,0 +1,70 @@
+Method/Filter	Description
+-username	Filter by username
+-phone	Filter by phone
+-course	Filter by course
+-year	Filter by year
+.sort("a")	Sort ascending by the last filter (e.g., -username)
+.sort("z")	Sort descending by the last filter
+.limit(n)	Show only n rows
+.measure(">n")	Filter rows where the last filter value > n (numeric comparison)
+.include("abc")	Show rows where any column in filters contains "abc"
+.format()	Make output colorful, alternating row colors, and visually appealing
+
+// ---------- help ----------
+if (/^space\s+help\s*\(\s*\)\s*$/i.test(lower)) {
+  appendLine('<strong style="color:#00d4ff">Available Commands (examples)</strong>');
+  appendLine('Space show("registered")  — show full user list');
+  appendLine('Space show("registered","-username -phone")  — show only username & phone');
+  appendLine('Space sendMsg("0712345678","Hello")  — simulate send');
+  appendLine('Space delUser("0712345678")  — delete user by phone');
+  appendLine('Space delMsg({from:"0711",to:"0722",msg:"Hello"})  — delete messages matching');
+  appendLine('Space print("hi","16px","#f00","bold")  — print styled text');
+  appendLine("Space clear()  — clear terminal output");
+  appendLine("Space exit()  — go to /home");
+  appendLine("Space show('registered', '-username -year -course -phone')  — Show user filters");
+  return;
+}
+
+
+
+1. Working snippets 
+
+Filter
+    -username
+    -phone
+    -course
+    -year
+
+    .sort("a|z")
+    .limit(n)
+    .measure(">n")
+    .include("abc")
+    .format()
+    .format("2rem red bold)
+
+    Features
+    -smart auto clossing or auto close deleting
+    shift +tab for suggestions
+
+     const COMMAND_LIST = [
+      "Space show("registered")",
+      "Space sendMsg",
+      "Space delUser",
+      "Space delMsg",
+      "Space print",
+      "Space clear",
+      "Space exit",
+      "Space help",
+      "Space shutdown",
+      "Space restartService",
+      'Space show("devices")',
+    ];
+
+
+db as follows
+{
+        username: "Amani",
+        phone: "0728374628",
+        course: "Computer Science",
+        year: 1,
+      },

@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Admin Terminal</title>
+    <style>
+      body {
+        background: #0d0d0d;
+        font-family: "Fira Code", "Consolas", monospace;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        color: #00ff99;
+      }
+
+      .terminal {
+        width: 90%;
+        max-width: 900px;
+        height: 80vh;
+        border-radius: 10px;
+        background: #111;
+        box-shadow: 0 0 30px #00ff99;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        cursor: text;
+        overflow: hidden;
+      }
+
+      .output {
+        flex: 1;
+        overflow-y: auto;
+        padding-right: 10px;
+        font-size: 1rem;
+      }
+
+      .input-area {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+        font-size: 1rem;
+      }
+
+      .prompt {
+        color: #00ff99;
+        font-weight: bold;
+        margin-top: 10px;
+      }
+
+      #terminalInput {
+        flex: 1;
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid #333;
+        padding: 5px;
+        font-size: 1rem;
+        color: #00ffee;
+        outline: none;
+      }
+
+      .output-line {
+        margin: 5px 0 20px 0;
+      }
+
+      .output-line .command {
+        color: #6affff;
+      }
+
+      .output-line .success {
+        color: #00ff99;
+      }
+
+      .output-line .error {
+        color: #ff5555;
+      }
+
+      .output-line .info {
+        color: #00d4ff;
+      }
+      #terminalTitle {
+        flex-shrink: 0;
+        color: rgb(185, 5, 176);
+        font-weight: bold;
+        font-size: 18px;
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        font-family: "Franklin Gothic Medium", "Arial Narrow", Arial, sans-serif;
+        text-align: center;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="terminal" id="terminalBox">
+      <div class="output" id="terminalOutput"></div>
+
+      <div class="input-area">
+        <span class="prompt" id="promptText">Space@Admin[~]$</span>
+        <input id="terminalInput" type="text" autocomplete="off" />
+      </div>
+    </div>
+  </body>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    let page = io();
+
+    const input = document.getElementById("terminalInput");
+    const output = document.getElementById("terminalOutput");
+    const box = document.getElementById("terminalBox");
+    const promptText = document.getElementById("promptText") || null;
+    // Add mini title at the top of the terminal output
+    function addTerminalTitle() {
+      const title = document.createElement("div");
+      title.id = "terminalTitle";
+      title.innerHTML = "Space Edition";
+
+      // Insert at the top
+      output.prepend(title);
+    }
+
+    // call once on load
+    addTerminalTitle();
+    let currentMatches = [];
+    let currentMatchIndex = 0;
+
+    let usersDB = [];
+
+    fetch("/everyone")
+      .then((type) => type.json())
+      .then((data) => {
+        usersDB = data.info;
+      });
+
+    // --------- Powerful SpaceShow class ----------
+    class SpaceShow {
+      constructor(page, filterString = "") {
+        this.page = page.toLowerCase();
+        this.filters = [];
+        this.data = usersDB.slice(); // clone DB
+        this.sortOrder = null;
+        this.rowLimit = null;
+        this.measureFilter = null;
+        this.includeText = null;
+
+        // styling
+        this.useCustomStyle = false;
+        this.style = { size: "14px", color: "#00d4ff", weight: "bold" };
+
+        // store last list for formatting
+        this._lastList = null;
+        // defer printing
+        this.deferPrint = false;
+
+        // parse filterString like "-username -phone"
+        if (filterString) {
+          filterString
+            .trim()
+            .split(/\s+/)
+            .forEach((tok) => {
+              if (tok.startsWith("-"))
+                this.filters.push(tok.slice(1).toLowerCase());
+            });
+        }
+      }
+
+      // ---------------- Chainable methods ----------------
+      sort(order) {
+        this.sortOrder = order.toLowerCase();
+        return this;
+      }
+
+      limit(n) {
+        this.rowLimit = n;
+        return this;
+      }
+
+      measure(condition) {
+        this.measureFilter = condition;
+        return this;
+      }
+
+      include(text) {
+        this.includeText = text.toLowerCase();
+        return this;
+      }
+
+      // ---------------- Internal render ----------------
+      _render(list) {
+        list.forEach((u, i) => {
+          // build row according to filters
+          const row = this.filters.length
+            ? this.filters.map((f) => u[f] ?? "").join(" - ")
+            : `${u.username} - ${u.phone} - ${u.course} - Year ${u.year}`;
+
+          // apply style
+          if (this.useCustomStyle) {
+            appendLine(
+              `<span style="color:${this.style.color}; font-weight:${this.style.weight}; font-size:${this.style.size}">${row}</span>`
+            );
+          } else if (this.useAlternating) {
+            const color = i % 2 === 0 ? "yellow" : "deepskyblue";
+            appendLine(
+              `<span style="color:${color}; font-weight:bold">${row}</span>`
+            );
+          } else {
+            appendLine(row);
+          }
+        });
+      }
+
+      // ---------------- Show plain output ----------------
+      show() {
+        let list = this.data.slice();
+
+        // measure filter
+        if (this.measureFilter && this.filters.length) {
+          const lastFilter = this.filters[this.filters.length - 1];
+          const op = this.measureFilter[0];
+          const num = parseFloat(this.measureFilter.slice(1));
+          list = list.filter((u) => {
+            const val = u[lastFilter];
+            if (typeof val === "number")
+              return op === ">" ? val > num : val < num;
+            return true;
+          });
+        }
+
+        // include filter
+        if (this.includeText) {
+          list = list.filter((u) =>
+            this.filters.some((f) =>
+              String(u[f]).toLowerCase().includes(this.includeText)
+            )
+          );
+        }
+
+        // sort
+        if (this.sortOrder && this.filters.length) {
+          const last = this.filters[this.filters.length - 1];
+          list.sort((a, b) => {
+            if (a[last] < b[last]) return this.sortOrder === "a" ? -1 : 1;
+            if (a[last] > b[last]) return this.sortOrder === "a" ? 1 : -1;
+            return 0;
+          });
+        }
+
+        // limit
+        if (this.rowLimit) list = list.slice(0, this.rowLimit);
+
+        // store list for formatting
+        this._lastList = list;
+        this.useAlternating = false; // reset alternating
+
+        // intelligently print only if not deferred
+        if (!this.deferPrint) {
+          this._render(list);
+          this.deferPrint = false; // reset defer after printing
+        }
+
+        return this;
+      }
+
+      // ---------------- Apply formatting ----------------
+      format(styleStr) {
+        // if no _lastList yet, call show() but defer printing
+        if (!this._lastList) {
+          this.deferPrint = true; // prevent show() from printing
+          this.show();
+          this.deferPrint = false; // reset after show
+        }
+
+        this.useCustomStyle = false;
+        this.useAlternating = false;
+
+        if (styleStr) {
+          this.useCustomStyle = true;
+          const parts = styleStr.split(/\s+/);
+          if (parts[0]) this.style.size = parts[0];
+          if (parts[1]) this.style.color = parts[1];
+          if (parts[2]) this.style.weight = parts[2];
+        } else {
+          this.useAlternating = true;
+        }
+
+        this._render(this._lastList);
+        return this;
+      }
+    }
+
+    // Accept top suggestion (Tab)
+    function acceptTopSuggestion() {
+      if (suggestionBox.style.display === "none") return false;
+      const first = suggestionBox.querySelector("div");
+      if (!first) return false;
+
+      // Replace input with the suggestion
+      input.value = first.innerText;
+
+      // If it's a function-type command, append parentheses for convenience
+      if (input.value.endsWith("print")) {
+        input.value += "()";
+      } else if (input.value.endsWith("show")) {
+        input.value += '("registered")';
+      } else if (input.value.endsWith("sendMsg")) {
+        input.value += '("phone","msg")';
+      } else if (input.value.endsWith("delUser")) {
+        input.value += '("phone")';
+      } else if (input.value.endsWith("delMsg")) {
+        input.value += '({from:"pone",to:"phone",msg:"message"}) ';
+      } else if (
+        input.value.endsWith("clear") ||
+        input.value.endsWith("help") ||
+        input.value.endsWith("exit")
+      ) {
+        input.value += "()";
+      }
+
+      input.focus();
+      hideSuggestions();
+      validateAndSuggest(input.value); // update color / suggestions
+      return true;
+    }
+
+    // --- Function to parse show() command with optional filters ---
+    function handleShowCommand(rawInput) {
+      let input = rawInput.toLowerCase().trim();
+
+      // Example command:
+      // space show("registered") -username -phone -year
+
+      // Extract the page target (e.g., "registered")
+      const pageMatch = input.match(/show\(["'](.*?)["']\)/i);
+      if (!pageMatch) {
+        printToTerminal("❌ Invalid show() command format.", "red", "bold");
+        return;
+      }
+
+      const page = pageMatch[1];
+
+      // Extract flags (e.g., -username, -phone, -year)
+      const flags = input.match(/-\w+/g) || [];
+
+      // Allowed keys
+      const validKeys = ["-username", "-phone", "-course", "-year"];
+
+      // Validate flags
+      const extractedKeys = flags.filter((flag) => validKeys.includes(flag));
+
+      if (extractedKeys.length === 0) {
+        printToTerminal(
+          "⚠ No filters applied. Showing full list...\n",
+          "yellow"
+        );
+        return renderUserList(usersDB, []);
+      }
+
+      // Render results
+      renderUserList(usersDB, extractedKeys);
+    }
+
+    // --- Render user list with optional filters ---
+    function renderUserList(list, filters) {
+      let count = 1;
+
+      list.forEach((user) => {
+        let line = `${count}. `;
+
+        if (filters.length === 0 || filters.includes("-username"))
+          line += `${user.username}  `;
+
+        if (filters.length === 0 || filters.includes("-phone"))
+          line += `| ${user.phone}  `;
+
+        if (filters.length === 0 || filters.includes("-course"))
+          line += `| ${user.course}  `;
+
+        if (filters.length === 0 || filters.includes("-year"))
+          line += `| Year ${user.year}  `;
+
+        printToTerminal(line, "lightgreen", "bold");
+        count++;
+      });
+    }
+
+    // --- Terminal printing (uses your terminal output system) ---
+    function printToTerminal(
+      msg,
+      color = "white",
+      weight = "normal",
+      size = "14px"
+    ) {
+      const terminalOutput = document.getElementById("terminalOutput");
+
+      const line = document.createElement("div");
+      line.style.color = color;
+      line.style.fontWeight = weight;
+      line.style.fontSize = size;
+      line.textContent = msg;
+
+      terminalOutput.appendChild(line);
+      terminalOutput.scrollTop = terminalOutput.scrollHeight;
+    }
+
+    let messagesDB = [
+      { from: "0728374628", to: "0728001122", msg: "Yo Brian" },
+      { from: "0728001122", to: "0728374628", msg: "What's up?" },
+      { from: "0112334455", to: "0745009988", msg: "Project update" },
+    ];
+
+    // --------- Commands metadata for autocomplete & validation ----------
+    const COMMAND_SPECS = [
+      {
+        name: 'Space show("registered"... )',
+        pattern: /^space\s+show\(\s*"[^"]+"\s*(?:,\s*"-[a-z0-9_\s-]+")?\s*\)$/i,
+        hint: 'Space show("registered", "-username -phone")',
+      },
+      {
+        name: 'Space sendMsg("phone","message")',
+        pattern: /^space\s+sendmsg\(\s*"[^"]+"\s*,\s*"[^"]+"\s*\)$/i,
+        hint: 'Space sendMsg("0712345678","Hello")',
+      },
+      {
+        name: 'Space delUser("phone")',
+        pattern: /^space\s+deluser\(\s*"[^"]+"\s*\)$/i,
+        hint: 'Space delUser("0722000000")',
+      },
+      {
+        name: 'Space delMsg({from:"",to:"",msg:""(optional)})',
+        pattern: /^space\s+delmsg\(\s*\{.*\}\s*\)$/i,
+        hint: 'Space delMsg({from:"0711",to:"0722",msg:"Hello"})',
+      },
+      {
+        name: 'Space print("msg", "size", "color", "weight")',
+        pattern: /^space\s+print\(\s*"[^"]+"\s*(?:,\s*"[^"]*"\s*){0,3}\)$/i,
+        hint: 'Space print("hi","16px","red","bold")',
+      },
+      {
+        name: "Space clear()",
+        pattern: /^space\s+clear\(\s*\)$/i,
+        hint: "Space clear()",
+      },
+      {
+        name: "Space exit()",
+        pattern: /^space\s+exit\(\s*\)$/i,
+        hint: "Space exit()",
+      },
+      {
+        name: "Space help()",
+        pattern: /^space\s+help\(\s*\)$/i,
+        hint: "Space help()",
+      },
+
+      {
+        name: 'Space show("devices")',
+        pattern: /^space\s+show\("devices"\)$/i,
+        hint: 'Space show("devices")',
+      },
+    ];
+
+    // quick list strings for autocomplete matching
+    const COMMAND_LIST = [
+      "Space show",
+      "Space sendMsg",
+      "Space delUser",
+      "Space delMsg",
+      "Space print",
+      "Space clear",
+      "Space exit",
+      "Space help",
+      "Space shutdown",
+      "Space restartService",
+    ];
+
+    // --------- UI: suggestion box (creates itself) ----------
+    let suggestionBox = document.createElement("div");
+    suggestionBox.style.position = "absolute";
+    suggestionBox.style.background = "#0b0b0b";
+    suggestionBox.style.border = "1px solid #222";
+    suggestionBox.style.padding = "6px";
+    suggestionBox.style.borderRadius = "6px";
+    suggestionBox.style.boxShadow = "0 6px 18px rgba(0,0,0,0.6)";
+    suggestionBox.style.zIndex = 9999;
+    suggestionBox.style.display = "none";
+    suggestionBox.style.minWidth = "220px";
+    suggestionBox.style.fontFamily = "Consolas, monospace";
+    suggestionBox.style.color = "#fff";
+    suggestionBox.id = "terminalSuggestionBox";
+    document.body.appendChild(suggestionBox);
+
+    // helper to position suggestion box under input
+    function placeSuggestionBox() {
+      const rect = input.getBoundingClientRect();
+      suggestionBox.style.left = `${rect.left}px`;
+      suggestionBox.style.top = `${rect.bottom + 6}px`;
+    }
+
+    // --------- History ----------
+    let history = [];
+    let historyIndex = -1;
+    const HISTORY_LIMIT = 200;
+
+    // --------- Helpers: print nicely ----------
+    function appendLine(html, className) {
+      const row = document.createElement("div");
+      row.className = "output-line";
+      if (className) row.classList.add(className);
+      row.innerHTML = html;
+      output.appendChild(row);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    // small helper to escape HTML in user input where needed
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    // pretty prompt text getter
+    function prompt() {
+      return promptText ? promptText.innerText : "Space@Admin[~]$";
+    }
+
+    input.addEventListener("keydown", (e) => {
+      const pos = input.selectionStart;
+      const val = input.value;
+
+      // ---------- Smart paired deletion ----------
+      if (e.key === "Backspace") {
+        const prevChar = val[pos - 1];
+        const nextChar = val[pos];
+        if (
+          (prevChar === "(" && nextChar === ")") ||
+          (prevChar === '"' && nextChar === '"') ||
+          (prevChar === "'" && nextChar === "'")
+        ) {
+          e.preventDefault();
+          input.value = val.slice(0, pos - 1) + val.slice(pos + 1);
+          input.selectionStart = input.selectionEnd = pos - 1;
+          return;
+        }
+      }
+
+      // ---------- Tab / Shift+Tab suggestions ----------
+      if (e.key === "Tab") {
+        if (currentMatches.length === 0) return;
+
+        if (e.shiftKey) {
+          currentMatchIndex =
+            (currentMatchIndex - 1 + currentMatches.length) %
+            currentMatches.length;
+        } else {
+          currentMatchIndex = currentMatchIndex % currentMatches.length;
+        }
+
+        input.value = currentMatches[currentMatchIndex];
+
+        const funcCommands = [
+          "show",
+          "sendmsg",
+          "deluser",
+          "delmsg",
+          "print",
+          "clear",
+          "help",
+          "exit",
+          "shutdown",
+          "restartservice",
+        ];
+
+        const lowerCmd = input.value.toLowerCase();
+        for (let cmd of funcCommands) {
+          if (lowerCmd.endsWith(cmd)) {
+            if (["show"].includes(cmd)) input.value += '("registered")';
+            else if (cmd === "sendmsg") input.value += '("phone","msg")';
+            else if (cmd === "deluser") input.value += '("phone")';
+            else if (cmd === "delmsg")
+              input.value += '({from:"pone",to:"phone",msg:"message"})';
+            else input.value += "()"; // for print, clear, help, exit, shutdown, restartService
+            break;
+          }
+        }
+
+        input.focus();
+
+        if (!e.shiftKey) {
+          currentMatchIndex = (currentMatchIndex + 1) % currentMatches.length;
+        }
+
+        e.preventDefault();
+        return;
+      }
+
+      // ---------- Enter key ----------
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const command = val.trim();
+        if (command) {
+          history.push(command);
+          if (history.length > HISTORY_LIMIT) history.shift();
+          historyIndex = history.length; // reset to fresh typing
+          handleCommand(command);
+        }
+        input.value = "";
+        hideSuggestions();
+        validateAndSuggest("");
+        return;
+      }
+
+      // ---------- ArrowUp / ArrowDown for history ----------
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (history.length === 0) return;
+
+        if (historyIndex > 0) historyIndex--;
+        else historyIndex = history.length - 1;
+
+        input.value = history[historyIndex] || "";
+        validateAndSuggest(input.value);
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (history.length === 0) return;
+
+        if (historyIndex < history.length - 1) historyIndex++;
+        else {
+          historyIndex = history.length;
+          input.value = "";
+        }
+
+        input.value = history[historyIndex] || "";
+        validateAndSuggest(input.value);
+        return;
+      }
+
+      // ---------- Escape ----------
+      if (e.key === "Escape") {
+        hideSuggestions();
+        return;
+      }
+
+      // ---------- Auto-close parentheses / quotes ----------
+      if (handleAutoClose(e)) {
+        validateAndSuggest(input.value);
+        return;
+      }
+
+      // default: allow other keys
+    });
+
+    // --------- Live validation & suggestions ----------
+    function validateAndSuggest(raw) {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        input.style.color = "#fff";
+        hideSuggestions();
+        currentMatches = [];
+        currentMatchIndex = 0;
+        return;
+      }
+
+      const lower = trimmed.toLowerCase();
+      const matches = COMMAND_LIST.filter(
+        (c) =>
+          c.toLowerCase().startsWith(lower) || lower.startsWith(c.toLowerCase())
+      );
+
+      currentMatches = matches;
+      currentMatchIndex = 0;
+
+      // --- Set input color based on match ---
+      if (currentMatches.length > 0) {
+        input.style.color = "lightgreen"; // match found
+      } else {
+        input.style.color = "#fff"; // no match
+      }
+
+      if (!matches.length) return hideSuggestions();
+
+      // position & show suggestion box
+      placeSuggestionBox();
+      suggestionBox.innerHTML = ""; // clear previous suggestions
+      matches.forEach((cmd, idx) => {
+        const div = document.createElement("div");
+        div.textContent = cmd;
+        div.style.padding = "4px 6px";
+        div.style.cursor = "pointer";
+        div.style.background = idx === 0 ? "#222" : "transparent";
+        div.style.color = "#fff";
+
+        // ✅ Click fills input fully
+        div.addEventListener("click", () => {
+          input.value = cmd;
+
+          // Auto-fill parentheses or arguments for function commands
+          if (cmd.toLowerCase().endsWith("show"))
+            input.value += '("registered")';
+          else if (cmd.toLowerCase().endsWith("sendmsg"))
+            input.value += '("phone","msg")';
+          else if (cmd.toLowerCase().endsWith("deluser"))
+            input.value += '("phone")';
+          else if (cmd.toLowerCase().endsWith("delmsg"))
+            input.value += '({from:"pone",to:"phone",msg:"message"})';
+          else if (cmd.toLowerCase().endsWith("print")) input.value += "()";
+          else if (
+            ["clear", "help", "exit"].some((c) => cmd.toLowerCase().endsWith(c))
+          )
+            input.value += "()";
+
+          hideSuggestions(); // hide the suggestions box
+          input.focus(); // keep focus on input
+        });
+
+        // ✅ Hover effect
+        div.addEventListener("mouseenter", () => {
+          div.style.background = "#333";
+          div.style.color = "#00ff88";
+        });
+        div.addEventListener("mouseleave", () => {
+          div.style.background = idx === 0 ? "#222" : "transparent";
+          div.style.color = "#fff";
+        });
+
+        suggestionBox.appendChild(div);
+      });
+
+      suggestionBox.style.display = "block";
+    }
+
+    function hideSuggestions() {
+      suggestionBox.style.display = "none";
+    }
+
+    // --------- Auto-close logic (basic but friendly) ----------
+    function handleAutoClose(e) {
+      const pos = input.selectionStart;
+      const val = input.value;
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return false;
+
+      // Auto-close only if next char is NOT already the closing char
+      function safeInsert(open, close) {
+        if (val[pos] === close) return false; // already there, skip
+        input.value = val.slice(0, pos) + open + close + val.slice(pos);
+        input.selectionStart = input.selectionEnd = pos + 1;
+        return true;
+      }
+
+      if (e.key === "(") {
+        e.preventDefault();
+        return safeInsert("(", ")");
+      }
+      if (e.key === '"') {
+        e.preventDefault();
+        return safeInsert('"', '"');
+      }
+      if (e.key === "'") {
+        e.preventDefault();
+        return safeInsert("'", "'");
+      }
+
+      // Skip over closing char if next char matches
+      if (
+        (e.key === ")" || e.key === '"' || e.key === "'") &&
+        val[pos] === e.key
+      ) {
+        e.preventDefault();
+        input.selectionStart = input.selectionEnd = pos + 1;
+        return true;
+      }
+
+      return false;
+    }
+
+    // --------- Command executors ----------
+
+    function showUsers(page, filterString) {
+      // only registered supported for demo
+      if (!page || page.toLowerCase() !== "registered") {
+        appendLine(
+          `<span style="color:#ff6a6a">Unknown page: ${escapeHtml(page)}</span>`
+        );
+        return;
+      }
+
+      // parse filters like "-username -phone"
+      const filters = [];
+      if (filterString) {
+        // accept either: ' "-username -phone"' or '-username -phone'
+        const raw = filterString.trim().replace(/^,/, "").trim();
+        raw.split(/\s+/).forEach((tok) => {
+          if (!tok) return;
+          if (tok.startsWith("-")) {
+            filters.push(tok.slice(1).toLowerCase());
+          }
+        });
+      }
+
+      appendLine(
+        `<span style="color:#00d4ff"><strong>Users List${
+          filters.length ? " (filtered)" : ""
+        } — total ${usersDB.length}</strong></span>`
+      );
+
+      usersDB.forEach((u, i) => {
+        if (filters.length === 0) {
+          appendLine(
+            `${i + 1}. ${escapeHtml(u.username)} - ${escapeHtml(
+              u.phone
+            )} - ${escapeHtml(u.course)} - Year ${escapeHtml(u.year)}`
+          );
+        } else {
+          // build filtered display
+          const parts = [];
+          filters.forEach((f) => {
+            if (f in u) parts.push(escapeHtml(u[f]));
+            // allow some synonyms
+            else if (f === "name" && u.username)
+              parts.push(escapeHtml(u.username));
+            else if (f === "year" && u.year)
+              parts.push(`Year ${escapeHtml(u.year)}`);
+          });
+          appendLine(`${i + 1}. ${parts.join(" - ")}`);
+        }
+      });
+    }
+
+    function sendMsg(phone, msg) {
+      // Just simulate: push to messagesDB
+      messagesDB.push({ from: "ADMIN", to: phone, msg });
+      appendLine(
+        `<span style="color:#00ff88">📨 Sent "${escapeHtml(
+          msg
+        )}" → ${escapeHtml(phone)}</span>`
+      );
+      appendLine(`📨 Message sent to ${phone}`, "success");
+    }
+
+    function delUser(phone) {
+      const idx = usersDB.findIndex((u) => u.phone === phone);
+      if (idx === -1) {
+        appendLine(
+          `<span style="color:#ff6a6a">User ${escapeHtml(
+            phone
+          )} not found.</span>`
+        );
+        return;
+      }
+      usersDB.splice(idx, 1);
+      appendLine(
+        `<span style="color:#ff9966">🗑️ Deleted user ${escapeHtml(
+          phone
+        )}</span>`
+      );
+      appendLine(`User with phone ${phone} deleted`);
+    }
+
+    function delMsg(criteriaObj) {
+      // criteriaObj may have from, to, msg (msg optional)
+      const before = messagesDB.length;
+      messagesDB = messagesDB.filter((m) => {
+        if (criteriaObj.from && m.from !== criteriaObj.from) return true;
+        if (criteriaObj.to && m.to !== criteriaObj.to) return true;
+        if (criteriaObj.msg && m.msg !== criteriaObj.msg) return true;
+        // if matches all provided -> remove it (return false)
+        return false;
+      });
+      const removed = before - messagesDB.length;
+      appendLine(
+        `<span style="color:#ff9966">🗑️ Deleted ${removed} message(s) matching criteria</span>`
+      );
+      appendLine(`Deleted ${removed} message(s)`);
+    }
+
+    // parse delMsg argument string like: {from:"0711", to:"0722", msg:"hello"}
+    function parseObjectArg(s) {
+      try {
+        // convert to valid JSON: replace single quotes, add double quotes around keys if missing
+        // simple parser: find key: "value"
+        const obj = {};
+        // remove leading/trailing braces
+        const inner = s.trim().replace(/^\{/, "").replace(/\}$/, "").trim();
+        if (!inner) return obj;
+        // split by commas not inside quotes
+        const parts = inner.match(/(?:[^,"]+|"[^"]*")+/g) || [];
+        parts.forEach((p) => {
+          const kv = p.split(":");
+          if (kv.length < 2) return;
+          const key = kv[0].trim().replace(/^['"]|['"]$/g, "");
+          // join rest as value (in case value contains :)
+          const rawVal = kv.slice(1).join(":").trim();
+          const val = rawVal.replace(/^['"]|['"]$/g, "");
+          obj[key] = val;
+        });
+        return obj;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // --------- Main command parser & handler ----------
+    function handleCommand(raw) {
+      if (!raw || !raw.trim()) return;
+
+      const original = raw.trim();
+      const lower = original.toLowerCase().trim();
+
+      // ---------- Print prompt + command ----------
+      appendLine(
+        `<span style="color:#6affff">${escapeHtml(
+          prompt()
+        )}</span> ${escapeHtml(original)}`,
+        "command-line"
+      );
+
+      // ---------- Helpers ----------
+      const match = (re) => re.test(lower);
+
+      // ---------- SHUTDOWN ----------
+      if (/^space\s+shutdown\s*\(\s*\)\s*$/i.test(lower)) {
+        fetch("/appState", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appState: false }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            appendLine(
+              `<span style="color:#ff5555">🛑 Application shutdown triggered</span>`
+            );
+          })
+          .catch((err) => {
+            appendLine(
+              `<span style="color:#ff6a6a">Error: ${err.message}</span>`
+            );
+          });
+        return;
+      }
+
+      // ---------- RESTART SERVICE ----------
+      if (/^space\s+restartservice\s*\(\s*\)\s*$/i.test(lower)) {
+        fetch("/appState", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appState: true }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            appendLine(
+              `<span style="color:orange">🔄 Service restart triggered</span>`
+            );
+            appendLine(`Response: ${JSON.stringify(data)}`, "info");
+          })
+          .catch((err) => {
+            appendLine(
+              `<span style="color:#ff6a6a">Error: ${err.message}</span>`
+            );
+          });
+        return;
+      }
+
+      // ---------- SHOW (FULLY POWERFUL) ----------
+      if (lower.startsWith("space show")) {
+        // match page + optional filter string + optional chained methods
+        // e.g., space show("registered", "-phone").sort("a").limit(5).format("16px red bold")
+        const showMatch = original.match(
+          /show\(\s*["']([^"']+)["']\s*(?:,\s*["']([^"']+)["'])?\s*\)(.*)/i
+        );
+        if (!showMatch) {
+          appendLine(
+            `<span style="color:#ff5555">❌ Invalid show syntax.</span>`
+          );
+          return;
+        }
+
+        const pageName = showMatch[1]; // "registered", "devices", etc
+        const filterString = showMatch[2] || ""; // optional "-phone" etc
+        const chained = showMatch[3] || ""; // remaining chained methods
+        if (pageName.toLowerCase() === "registered") {
+          // create SpaceShow instance
+          let spaceShow = new SpaceShow("registered", filterString);
+
+          // ---------- Parse chainable methods ----------
+          const sortMatch = chained.match(/\.sort\(\s*["']([ad])["']\s*\)/i);
+          if (sortMatch) spaceShow = spaceShow.sort(sortMatch[1]);
+
+          const limitMatch = chained.match(/\.limit\(\s*(\d+)\s*\)/i);
+          if (limitMatch) spaceShow = spaceShow.limit(parseInt(limitMatch[1]));
+
+          const measureMatch = chained.match(
+            /\.measure\(\s*["']?([^"'\)]+)["']?\s*\)/i
+          );
+          if (measureMatch) spaceShow = spaceShow.measure(measureMatch[1]);
+
+          const includeMatch = chained.match(
+            /\.include\(\s*["']([^"']+)["']\s*\)/i
+          );
+          if (includeMatch) spaceShow = spaceShow.include(includeMatch[1]);
+
+          // ---------- Show & Format ----------
+          spaceShow.deferPrint = true; // prevent double printing
+          spaceShow.show();
+
+          const formatMatch = chained.match(
+            /\.format\(\s*["']([^"']+)["']\s*\)/i
+          );
+          if (formatMatch) spaceShow.format(formatMatch[1]);
+          else spaceShow.format(); // default alternating
+        } else if (pageName.toLowerCase() === "devices") {
+          fetch("/onlineUsers")
+            .then((res) => res.json())
+            .then((data) => {
+              alert(data.onlineUsers);
+              const total = data.onlineUsers;
+              if (total === 0) {
+                appendLine("No devices connected.", "yellow");
+              } else {
+                appendLine(
+                  `<strong style="color:#00d4ff">Connected Devices: ${total}</strong>`
+                );
+              }
+            })
+            .catch((err) => {
+              appendLine(
+                `<span style="color:#ff5555">Error fetching devices: ${err.message}</span>`
+              );
+            });
+        } else if (pageName.toLowerCase() === "online") {
+          fetch("/onlineUsers")
+            .then((res) => res.json())
+            .then((data) => {
+              if (!data.onlineUsers || data.onlineUsers.length === 0) {
+                appendLine("No users currently online.", "yellow");
+                return;
+              }
+              appendLine(
+                `<strong style="color:#00d4ff">Online Users:</strong>`
+              );
+              data.onlineUsers.forEach((u, i) => {
+                appendLine(
+                  `${i + 1}. ${escapeHtml(u.username)} - ${escapeHtml(u.phone)}`
+                );
+              });
+            })
+            .catch((err) => {
+              appendLine(
+                `<span style="color:#ff5555">Error fetching online users: ${err.message}</span>`
+              );
+            });
+        } else {
+          appendLine(
+            `<span style="color:#ff5555">❌ Unknown page: ${escapeHtml(
+              pageName
+            )}</span>`
+          );
+        }
+        return;
+      }
+
+      // ---------- SEND MESSAGE ----------
+      if (/^space\s+sendmsg\(/i.test(raw)) {
+        const mm = raw.match(
+          /^space\s+sendmsg\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)\s*$/i
+        );
+        if (!mm) {
+          appendLine("❌ Invalid sendMsg format.", "error");
+          return;
+        }
+        const phone = mm[1];
+        const message = mm[2];
+        messagesDB.push({ from: "SERVER", to: phone, msg: message });
+        page.emit("sendMessage", {
+          from: "Admin Control",
+          to: phone,
+          msg: message,
+        });
+        appendLine(`✔ Message sent to ${phone}`, "success");
+        return;
+      }
+
+      // ---------- DELETE USER ----------
+      const delUserRe = /^space\s+deluser\s*\(\s*["']([^"']+)["']\s*\)\s*$/i;
+      if (delUserRe.test(original)) {
+        const mm = original.match(delUserRe);
+        const phone = mm[1];
+        delUser(phone);
+        return;
+      }
+
+      // ---------- DELETE MESSAGE ----------
+      const delMsgRe = /^space\s+delmsg\s*\(\s*(\{[\s\S]*\})\s*\)\s*$/i;
+      if (delMsgRe.test(original)) {
+        const mm = original.match(delMsgRe);
+        const objStr = mm[1];
+        const parsed = parseObjectArg(objStr);
+        if (!parsed) {
+          appendLine(
+            '<span style="color:#ff6a6a">Invalid delMsg syntax.</span>'
+          );
+          return;
+        }
+        const crit = {};
+        if (parsed.from) crit.from = parsed.from;
+        if (parsed.to) crit.to = parsed.to;
+        if (parsed.msg) crit.msg = parsed.msg;
+        delMsg(crit);
+        return;
+      }
+
+      // ---------- PRINT ----------
+      const printRe =
+        /^space\s+print\s*\(\s*"([^"]*)"(?:\s*,\s*"([^"]*)")?(?:\s*,\s*"([^"]*)")?(?:\s*,\s*"([^"]*)")?\s*\)\s*$/i;
+      if (printRe.test(original)) {
+        const mm = original.match(printRe);
+        const text = mm[1];
+        const fontSize = mm[2] && mm[2].trim() ? mm[2] : "14px";
+        const color = mm[3] && mm[3].trim() ? mm[3] : "#00d4ff";
+        const weight = mm[4] && mm[4].trim() ? mm[4] : "normal";
+
+        appendLine(
+          `<span style="color:${escapeHtml(color)}; font-size:${escapeHtml(
+            fontSize
+          )}; font-weight:${escapeHtml(weight)}">${escapeHtml(text)}</span>`
+        );
+        return;
+      }
+
+      // ---------- CLEAR ----------
+      if (/^space\s+clear\s*\(\s*\)\s*$/i.test(lower)) {
+        output.innerHTML = "";
+        return;
+      }
+
+      // ---------- HELP ----------
+      if (/^space\s+help\s*\(\s*\)\s*$/i.test(lower)) {
+        appendLine('<strong style="color:#00d4ff">Available Commands</strong>');
+        appendLine('Space show("registered")');
+        appendLine('Space show("devices")');
+        appendLine('Space show("online")');
+        appendLine('Space sendMsg("0712345678","Hello")');
+        appendLine('Space delUser("0712345678")');
+        appendLine('Space delMsg({from:"0711",to:"0722",msg:"Hi"})');
+        appendLine('Space print("Hi","16px","#ff0000","bold")');
+        appendLine("Space clear()");
+        appendLine("Space exit()");
+        appendLine("Space shutdown()");
+        appendLine("Space restartService()");
+        return;
+      }
+
+      // ---------- EXIT ----------
+      if (/^space\s+exit\s*\(\s*\)\s*$/i.test(lower)) {
+        window.location.href = "https://moispace.onrender.com/home";
+        return;
+      }
+
+      // ---------- UNKNOWN COMMAND ----------
+      appendLine(
+        `<span style="color:#ff6a6a">Unknown command — type Space help()</span>`
+      );
+    }
+
+    // --------- UI & Input handling ----------
+
+    // focus input on load & clicking box
+    window.onload = () => {
+      input.focus();
+    };
+    box.addEventListener("click", () => input.focus());
+
+    // input event: live validate + suggestions (fires after key events)
+    input.addEventListener("input", (e) => {
+      validateAndSuggest(input.value);
+    });
+
+    // when window resizes, reposition suggestion box
+    window.addEventListener("resize", placeSuggestionBox);
+
+    // click outside suggestion box hides it
+    document.addEventListener("click", (ev) => {
+      if (!suggestionBox.contains(ev.target) && ev.target !== input) {
+        hideSuggestions();
+      }
+    });
+  </script>
+</html>
